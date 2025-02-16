@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Converter</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <h1><i class="fas fa-music"></i> Music Converter</h1>
+        <div class="info-box">
+            <p><i class="fas fa-info-circle"></i> Paste any YouTube or Spotify link to convert to MP3</p>
+        </div>
+        <div class="input-group">
+            <input type="text" id="musicLink" placeholder="Paste your YouTube or Spotify link here...">
+            <button class="paste-btn" id="pasteBtn">
+                <i class="fas fa-paste"></i> Paste
+            </button>
+            <button class="convert-btn" id="convertBtn">
+                <i class="fas fa-download"></i> Convert
+            </button>
+        </div>
+        <div id="spotifyHelper" class="spotify-helper">
+            <p><i class="fab fa-spotify"></i>Try Download Your FVR music ...</p>
+            <p>Track: <span id="trackInfo"></span></p>
+        </div>
+        <div class="progress-container">
+            <div class="progress-bar">
+                <div id="progressBar" class="progress"></div>
+            </div>
+        </div>
+        <div id="status" class="status"></div>
+    </div>
+
+    <button class="theme-toggle" id="themeToggle">
+        <i class="fas fa-moon"></i>
+    </button>
+
+    <script>
+        // Add theme toggle functionality
+        document.addEventListener('DOMContentLoaded', () => {
+            const themeToggle = document.getElementById('themeToggle');
+            const pasteBtn = document.getElementById('pasteBtn');
+            
+            // Theme toggle
+            themeToggle.addEventListener('click', () => {
+                document.body.dataset.theme = document.body.dataset.theme === 'light' ? 'dark' : 'light';
+                themeToggle.querySelector('i').className = document.body.dataset.theme === 'light' ? 'fas fa-moon' : 'fas fa-sun';
+            });
+
+            // Paste button
+            pasteBtn.addEventListener('click', async () => {
+                try {
+                    const text = await navigator.clipboard.readText();
+                    document.getElementById('musicLink').value = text;
+                } catch (err) {
+                    console.error('Failed to read clipboard:', err);
+                }
+            });
+
+            const musicLink = document.getElementById('musicLink');
+            const convertBtn = document.getElementById('convertBtn');
+            const status = document.getElementById('status');
+            const progressBar = document.getElementById('progressBar');
+            const spotifyHelper = document.getElementById('spotifyHelper');
+            const trackInfo = document.getElementById('trackInfo');
+
+            function isSpotifyUrl(url) {
+                return url.toLowerCase().includes('spotify.com');
+            }
+
+            async function startDownload(youtubeUrl) {
+                try {
+                    status.textContent = 'Converting... Please wait';
+                    convertBtn.disabled = true;
+                    progressBar.style.width = '50%';
+
+                    const response = await fetch('/convert', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ url: youtubeUrl })
+                    });
+
+                    if (response.ok) {
+                        progressBar.style.width = '100%';
+                        const blob = await response.blob();
+                        
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        
+                        const contentDisposition = response.headers.get('content-disposition');
+                        const filename = contentDisposition 
+                            ? contentDisposition.split('filename=')[1].replace(/"/g, '')
+                            : 'audio.mp3';
+                        
+                        a.download = filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+
+                        status.textContent = 'Download complete!';
+                        status.style.color = '#4CAF50';
+                        musicLink.value = '';
+                    } else {
+                        const error = await response.json();
+                        status.textContent = error.error || 'Conversion failed';
+                        status.style.color = '#ff6b6b';
+                        progressBar.style.width = '0%';
+                    }
+                } catch (error) {
+                    status.textContent = 'An error occurred during conversion';
+                    status.style.color = '#ff6b6b';
+                    progressBar.style.width = '0%';
+                    console.error(error);
+                } finally {
+                    convertBtn.disabled = false;
+                }
+            }
+
+            async function handleSpotifyLink(url) {
+                try {
+                    status.textContent = 'Getting track information...';
+                    spotifyHelper.style.display = 'block';
+                    
+                    // First get the track info
+                    const response = await fetch('/get_youtube_link', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ url: url })
+                    });
+
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        trackInfo.textContent = data.track_info;
+                        status.textContent = 'Finding matching ...';
+                        
+                        // Now get the YouTube URL
+                        const ytResponse = await fetch('/get_youtube_url', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ query: data.track_info })
+                        });
+
+                        const ytData = await ytResponse.json();
+
+                        if (ytResponse.ok) {
+                            status.textContent = 'Starting download...';
+                            await startDownload(ytData.url);
+                        } else {
+                            throw new Error(ytData.error || 'Could not find ');
+                        }
+                    } else {
+                        throw new Error(data.error || 'Error processing Spotify link');
+                    }
+                } catch (error) {
+                    spotifyHelper.style.display = 'none';
+                    status.textContent = error.message || 'Error processing request';
+                    status.style.color = '#ff6b6b';
+                    console.error(error);
+                }
+            }
+
+            convertBtn.addEventListener('click', async () => {
+                const link = musicLink.value.trim();
+                spotifyHelper.style.display = 'none';
+                progressBar.style.width = '0%';
+                
+                if (!link) {
+                    status.textContent = 'Please enter a valid link';
+                    status.style.color = '#ff6b6b';
+                    return;
+                }
+
+                if (isSpotifyUrl(link)) {
+                    await handleSpotifyLink(link);
+                } else {
+                    await startDownload(link);
+                }
+            });
+
+            // Add support for Enter key
+            musicLink.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    convertBtn.click();
+                }
+            });
+        });
+    </script>
+</body>
+</html> 
